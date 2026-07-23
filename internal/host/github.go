@@ -154,6 +154,7 @@ func loadProject(dir, folderName string) (*Project, error) {
 	version := "—"
 	origin := ExternalAppsDirName + "/" + folderName
 	desc := "внешний проект из папки " + folderName
+	repo := ""
 	if meta, ok := readProjectMeta(abs); ok {
 		if meta.Name != "" {
 			name = meta.Name
@@ -166,6 +167,7 @@ func loadProject(dir, folderName string) (*Project, error) {
 		}
 		if meta.SourceRepo != "" {
 			desc = "github.com/" + meta.SourceRepo
+			repo = meta.SourceRepo
 		}
 	}
 	return &Project{
@@ -174,7 +176,9 @@ func loadProject(dir, folderName string) (*Project, error) {
 		Source:      SourceGitHub,
 		Version:     version,
 		Origin:      origin,
+		Repo:        repo,
 		Description: desc,
+		Available:   true,
 		Executables: findAllExes(abs),
 	}, nil
 }
@@ -202,6 +206,53 @@ func downloadRepoZip(owner, name string) (data []byte, ref string, err error) {
 		resp.Body.Close()
 	}
 	return nil, "", fmt.Errorf("репозиторий %s/%s не найден или не публичный (пробовал ветки main, master)", owner, name)
+}
+
+// CheckRepoAvailability проверяет, доступен ли исходный репозиторий проекта
+// для повторного скачивания (тот же адрес, что использует DownloadProject).
+// branch — известная ветка (пусто → пробуются main и master). Возвращает
+// (true, пояснение) либо (false, причина). Требует интернета; ответ быстрый
+// (HEAD-запрос с коротким таймаутом), архив не скачивается.
+func CheckRepoAvailability(sourceRepo, branch string) (bool, string) {
+	owner, name, err := ParseGitHubRepo(sourceRepo)
+	if err != nil {
+		return false, err.Error()
+	}
+	refs := []string{"main", "master"}
+	if branch != "" {
+		refs = []string{branch}
+	}
+	client := &http.Client{Timeout: 7 * time.Second}
+	last := ""
+	for _, ref := range refs {
+		req, rerr := http.NewRequest(http.MethodHead, codeloadBase+"/"+owner+"/"+name+"/zip/refs/heads/"+ref, nil)
+		if rerr != nil {
+			return false, rerr.Error()
+		}
+		resp, gerr := client.Do(req)
+		if gerr != nil {
+			return false, "GitHub недоступен (нужен интернет): " + gerr.Error()
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return true, "репозиторий доступен (ветка " + ref + ")"
+		}
+		last = fmt.Sprintf("ответ %d для ветки %s", resp.StatusCode, ref)
+	}
+	return false, "репозиторий недоступен или не публичный: " + last
+}
+
+// repoFromOrigin извлекает owner/repo и ветку из origin вида
+// "github:owner/repo@branch". Для иных форм возвращает пустые строки.
+func repoFromOrigin(origin string) (repo, branch string) {
+	s := strings.TrimPrefix(origin, "github:")
+	if s == origin {
+		return "", ""
+	}
+	if i := strings.LastIndex(s, "@"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
 }
 
 // findAllExes перечисляет ВСЕ .exe в дереве проекта. Порядок детерминирован:

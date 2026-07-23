@@ -76,6 +76,7 @@ func main() {
 }
 
 func usage() {
+	fmt.Fprintf(os.Stderr, "scg-host v%s\n", host.HostVersion)
 	fmt.Fprint(os.Stderr, `scg-host — управляющее приложение SCG (только запуск приложений)
 
 Запуск без аргументов — локальный старт с автооткрытием браузера.
@@ -110,7 +111,7 @@ func usage() {
 // ─────────────────────────────────────────────────────────────────────────
 
 func launchLocal() error {
-	fmt.Println("scg-host — управляющее приложение SCG")
+	fmt.Println("scg-host v" + host.HostVersion + " — управляющее приложение SCG")
 	fmt.Println()
 	const preferred = "http://localhost:8080"
 	if n, err := probeLocal(preferred, 700*time.Millisecond); err == nil {
@@ -234,11 +235,17 @@ func cmdProjects(args []string) error {
 	}
 	for _, p := range projs {
 		ver := "ветка " + p.Version
+		where := "github.com/" + p.Repo
 		if p.Source == host.SourceLocal {
 			ver = "v" + p.Version
+			where = p.Dir // последний указанный путь
 		}
-		fmt.Printf("  %-20s [%s] %-14s %s\n", p.Name, p.Source, ver, p.Description)
-		if len(p.Executables) == 0 {
+		mark := ""
+		if !p.Available {
+			mark = "  ⚠ папка недоступна"
+		}
+		fmt.Printf("  %-20s [%s] %-14s %s%s\n", p.Name, p.Source, ver, where, mark)
+		if len(p.Executables) == 0 && p.Available {
 			fmt.Println("      (нет .exe)")
 		}
 		for _, e := range p.Executables {

@@ -66,6 +66,9 @@ func (jm *JobManager) StartProject(project, exe string, args []string) (*Job, er
 	if !ok {
 		return nil, fmt.Errorf("проект %q не подключён", project)
 	}
+	if !p.Available {
+		return nil, fmt.Errorf("папка проекта %q недоступна (последний путь: %s) — верните папку на место или подключите заново", project, p.Dir)
+	}
 	allowed := false
 	for _, e := range p.Executables {
 		if e == exe {

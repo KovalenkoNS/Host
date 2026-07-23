@@ -16,13 +16,23 @@ Excel, правила целостности, работа со SCADA) в хос
   протокола/манифеста — прежние scg-component/1 и component.json УДАЛЕНЫ.
 - ДВА источника проектов (модель симметрична):
   1) ЛОКАЛЬНЫЙ (SourceLocal): путь к папке на машине пользователя
-     (AddLocalProject). Используется НА МЕСТЕ — ничего не копируется. Пути
-     запоминаются в состоянии и восстанавливаются при старте (LoadState).
+     (AddLocalProject). Используется НА МЕСТЕ — ничего не копируется.
+     ПОСЛЕДНИЙ УКАЗАННЫЙ ПУТЬ запоминается в состоянии и восстанавливается
+     при старте (LoadState) ДАЖЕ ЕСЛИ папка исчезла: карточка сохраняется
+     (Available=false, placeholderLocal — с последней известной версией),
+     запуск запрещён (StartProject). Повторный AddLocalProject того же имени
+     переподключает на новый путь (побеждает последний указанный).
      Версия — из README проекта (readmeVersion), иначе «—».
   2) GITHUB (SourceGitHub): ОДНА ссылка → DownloadProject качает ВЕСЬ
      репозиторий в подпапку external-apps/ (рядом с exe), пишет
-     .scg-project.json (ветка=версия, origin). Версия — ветка. Сканируется
-     при каждом старте (scanExternalRoot).
+     .scg-project.json (ветка=версия, origin, source_repo→Project.Repo).
+     Версия — ветка. Сканируется при каждом старте (scanExternalRoot).
+- ДОСТУПНОСТЬ (GET /api/projects/{name}/availability — живая проверка):
+  local — существует ли папка по последнему пути; github —
+  CheckRepoAvailability: HEAD на codeload той же базой codeloadBase, что и
+  скачивание (подменяется в тестах), архив НЕ качается. UI дёргает эндпоинт
+  асинхронно (checkAvail) для каждой карточки.
+- HostVersion (ids.go, сейчас 0.2.0) — версия хоста, видна в UI и CLI.
 - Запуск: JobManager.StartProject(project, exe, args) — проверяет, что exe из
   списка Project.Executables (защита от произвольного пути), затем
   Launcher.Run (raw). findAllExes: сортировка глубина→алфавит.
@@ -42,23 +52,27 @@ Excel, правила целостности, работа со SCADA) в хос
 - cmd/scg-host/main.go — точка входа; подкоманды projects | add-local |
   download | run-project | serve; launchLocal + probeLocal; openStore
   (external-apps + scg-apps.json, LoadState, Rescan); openBrowser.
-- internal/host/ids.go — пакетный док + NewCallID (id заданий).
+- internal/host/ids.go — пакетный док + HostVersion + NewCallID (id заданий).
 - internal/host/launcher.go — Launcher.Run: raw-запуск (dir+command+args),
   минимальное окружение, таймаут, WaitDelay=KillGrace (внуки на Windows),
   лимит 16 МиБ, resolveCommand (голое имя сперва ищется в dir), RunResult.
-- internal/host/registry.go — Project{Name,Dir,Source,Version,Origin,
-  Executables}; local + external; AddLocalProject, LoadState, Rescan,
-  RemoveProject, persistState; readmeVersion; loadLocalProject.
+- internal/host/registry.go — Project{Name,Dir,Source,Version,Origin,Repo,
+  Available,Executables}; local + external; AddLocalProject (re-point),
+  LoadState (пути+seedLocal, без stat), Rescan (placeholderLocal для
+  пропавших папок), RemoveProject, persistState; readmeVersion.
 - internal/host/github.go — ParseGitHubRepo, DownloadProject, findAllExes,
   downloadRepoZip (main→master), extractRepoZip (zip-slip защита, exec-биты),
-  loadProject (Source=github), projectMeta/.scg-project.json,
-  ExternalAppsDirName="external-apps".
+  loadProject (Source=github, Repo из меты), projectMeta/.scg-project.json,
+  CheckRepoAvailability + repoFromOrigin, ExternalAppsDirName="external-apps".
 - internal/host/jobs.go — Job{Project,Executable,Args}; JobManager.StartProject
-  (через Launcher.Run), Cancel, Wait, List/Get, семафор --max-parallel.
-- internal/host/server.go — HTTP API + Web UI (html/template, без CDN):
-  /api/projects (+rescan), /api/projects/local, /api/projects/github,
-  /api/projects/{name}/run, /remove; /api/jobs*; UI: две формы (локальный
-  путь / github-ссылка) + карточки проектов со списком .exe.
+  (через Launcher.Run; недоступный проект отвергается), Cancel, Wait,
+  List/Get, семафор --max-parallel.
+- internal/host/server.go — только HTTP API: /api/projects (+rescan),
+  /api/projects/local, /api/projects/github, /api/projects/{name}/run,
+  /remove, /availability; /api/jobs*.
+- internal/host/ui.go — uiHTML (Web UI, html/template, без CDN): две формы,
+  карточки (версия; local — последний путь; github — репозиторий;
+  доступность через checkAvail), таблица заданий. БЕЗ backtick внутри!
 - internal/host/listen.go — ListenSmart/PortOf.
 
 ## Правила работы для агента
@@ -86,7 +100,8 @@ Excel, правила целостности, работа со SCADA) в хос
     bin/scg-host serve --open
 
 ## Текущее состояние / открытые направления
-- Хост функционально завершён (v0.1.x), собирается и работает на Windows.
+- Хост функционально завершён (v0.2.0), собирается и работает на Windows.
+- Репозиторий связан с https://github.com/KovalenkoNS/Host (origin, ветка main).
 - .exe — программы Windows: на Linux/macOS github-проекты с .exe не запустятся
   (локальные проекты могут содержать exe под текущую ОС).
 - Следующий крупный шаг родительского SCG: Этап 2 (append-only журнал,

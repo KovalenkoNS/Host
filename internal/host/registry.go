@@ -19,13 +19,18 @@ const (
 
 // Project — подключённое приложение: папка с исполняемыми файлами.
 // Пользователь выбирает нужный .exe из Executables и запускает его (raw).
+//
+// Dir для локального проекта — ПОСЛЕДНИЙ УКАЗАННЫЙ ПУТЬ: он сохраняется
+// в состоянии и показывается даже если папка исчезла (Available=false).
 type Project struct {
 	Name        string   `json:"name"`
 	Dir         string   `json:"dir"`
 	Source      string   `json:"source"`  // SourceLocal | SourceGitHub
 	Version     string   `json:"version"` // github: ветка; local: из README
 	Origin      string   `json:"origin,omitempty"`
+	Repo        string   `json:"repo,omitempty"` // github: owner/repo (для проверки доступности)
 	Description string   `json:"description,omitempty"`
+	Available   bool     `json:"available"` // папка проекта существует и читается
 	Executables []string `json:"executables"`
 }
 
@@ -44,7 +49,8 @@ type Registry struct {
 	statePath    string
 	local        map[string]*Project // подключённые локальные (по пути)
 	external     map[string]*Project // скачанные с github (external-apps)
-	localPaths   map[string]string   // имя → путь локального проекта
+	localPaths   map[string]string   // имя → последний указанный путь
+	seedLocal    map[string]*Project // последнее известное состояние из файла
 }
 
 // NewRegistry — реестр над папкой внешних проектов и файлом состояния.
@@ -55,14 +61,17 @@ func NewRegistry(externalRoot, statePath string) *Registry {
 		local:        map[string]*Project{},
 		external:     map[string]*Project{},
 		localPaths:   map[string]string{},
+		seedLocal:    map[string]*Project{},
 	}
 }
 
 // ExternalRoot — папка внешних (github) проектов.
 func (r *Registry) ExternalRoot() string { return r.externalRoot }
 
-// LoadState восстанавливает подключённые ЛОКАЛЬНЫЕ проекты из файла состояния
-// (их пути). Вызывается один раз при инициализации, до Rescan.
+// LoadState восстанавливает подключённые ЛОКАЛЬНЫЕ проекты из файла состояния.
+// Путь запоминается ДАЖЕ ЕСЛИ папка сейчас недоступна: карточка проекта
+// сохраняется с последним указанным путём (Available=false), а не исчезает.
+// Вызывается один раз при инициализации, до Rescan.
 func (r *Registry) LoadState() {
 	if r.statePath == "" {
 		return
@@ -77,18 +86,19 @@ func (r *Registry) LoadState() {
 	}
 	r.mu.Lock()
 	for _, p := range st.Local {
-		if p.Dir == "" {
+		if p.Dir == "" || p.Name == "" {
 			continue
 		}
-		if fi, err := os.Stat(p.Dir); err == nil && fi.IsDir() {
-			r.localPaths[p.Name] = p.Dir
-		}
+		r.localPaths[p.Name] = p.Dir
+		cp := p
+		r.seedLocal[p.Name] = &cp
 	}
 	r.mu.Unlock()
 }
 
 // AddLocalProject подключает локальный проект по пути к его папке
-// (используется на месте, ничего не копируется).
+// (используется на месте, ничего не копируется). Повторное указание пути
+// для того же имени — переподключение: запоминается ПОСЛЕДНИЙ указанный путь.
 func (r *Registry) AddLocalProject(path string) (*Project, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -103,10 +113,6 @@ func (r *Registry) AddLocalProject(path string) (*Project, error) {
 	if _, ok := r.external[p.Name]; ok {
 		r.mu.Unlock()
 		return nil, fmt.Errorf("имя %q уже занято внешним проектом", p.Name)
-	}
-	if prev, ok := r.localPaths[p.Name]; ok && prev != abs {
-		r.mu.Unlock()
-		return nil, fmt.Errorf("имя %q уже занято локальным проектом из %s", p.Name, prev)
 	}
 	r.local[p.Name] = p
 	r.localPaths[p.Name] = abs
@@ -135,15 +141,16 @@ func (r *Registry) Rescan() (loaded []string, problems []error) {
 	freshLocal := map[string]*Project{}
 	freshPaths := map[string]string{}
 	for name, dir := range paths {
+		freshPaths[name] = dir // последний указанный путь сохраняется всегда
 		fi, err := os.Stat(dir)
 		if err != nil || !fi.IsDir() {
-			problems = append(problems, fmt.Errorf("локальный проект %q отключён: папка %s недоступна", name, dir))
+			freshLocal[name] = r.placeholderLocal(name, dir)
+			problems = append(problems, fmt.Errorf("локальный проект %q: папка %s сейчас недоступна — карточка сохранена с последним указанным путём", name, dir))
 			continue
 		}
 		p := loadLocalProject(dir)
 		p.Name = name // сохраняем имя, под которым проект был подключён
 		freshLocal[name] = p
-		freshPaths[name] = dir
 		loaded = append(loaded, name)
 	}
 	sort.Strings(loaded)
@@ -200,8 +207,33 @@ func loadLocalProject(dir string) *Project {
 		Version:     ver,
 		Origin:      dir,
 		Description: "локальный проект: " + dir,
+		Available:   true,
 		Executables: findAllExes(dir),
 	}
+}
+
+// placeholderLocal — карточка локального проекта, папка которого сейчас
+// недоступна: сохраняет последний указанный путь и последнюю известную
+// версию (из прошлого скана или из файла состояния). Запуск запрещён.
+func (r *Registry) placeholderLocal(name, dir string) *Project {
+	r.mu.RLock()
+	prev, okPrev := r.local[name]
+	seed, okSeed := r.seedLocal[name]
+	r.mu.RUnlock()
+	p := &Project{Name: name, Dir: dir, Source: SourceLocal, Version: "—", Origin: dir}
+	switch {
+	case okPrev:
+		cp := *prev
+		p = &cp
+	case okSeed:
+		cp := *seed
+		p = &cp
+	}
+	p.Name, p.Dir, p.Source = name, dir, SourceLocal
+	p.Available = false
+	p.Executables = nil
+	p.Description = "папка недоступна — последний указанный путь: " + dir
+	return p
 }
 
 // GetProject — проект по имени (локальный или github).
@@ -257,6 +289,7 @@ func (r *Registry) RemoveProject(name string) error {
 	case isLoc:
 		r.mu.Lock()
 		delete(r.localPaths, name)
+		delete(r.seedLocal, name)
 		r.mu.Unlock()
 	default:
 		return fmt.Errorf("проект %q не найден", name)

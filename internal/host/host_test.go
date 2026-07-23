@@ -194,14 +194,72 @@ func TestRegistryLoadStatePersist(t *testing.T) {
 	if len(problems) != 0 || len(loaded) != 1 || loaded[0] != "keep-me" {
 		t.Fatalf("восстановление: loaded=%v problems=%v", loaded, problems)
 	}
-	if _, ok := reg2.GetProject("keep-me"); !ok {
-		t.Fatal("keep-me не восстановлен из состояния")
+	if p, ok := reg2.GetProject("keep-me"); !ok || !p.Available {
+		t.Fatalf("keep-me не восстановлен из состояния: %+v ok=%v", p, ok)
 	}
-	// Исчезновение папки — проект отключается с сообщением, а не падением.
+	// Исчезновение папки НЕ удаляет карточку: она сохраняется с последним
+	// указанным путём (Available=false), с предупреждением, а не падением.
 	os.RemoveAll(src)
 	loaded, problems = reg2.Rescan()
 	if len(loaded) != 0 || len(problems) != 1 {
 		t.Fatalf("после удаления папки: loaded=%v problems=%v", loaded, problems)
+	}
+	p, ok := reg2.GetProject("keep-me")
+	if !ok || p.Available || p.Dir != src {
+		t.Fatalf("карточка с последним путём должна сохраниться: %+v ok=%v", p, ok)
+	}
+	if len(p.Executables) != 0 {
+		t.Errorf("у недоступного проекта не должно быть exe: %v", p.Executables)
+	}
+	// И после ПЕРЕЗАПУСКА (новый реестр из того же файла состояния) карточка
+	// по-прежнему видна с последним указанным путём и последней версией.
+	reg3 := NewRegistry(ext, state)
+	reg3.LoadState()
+	reg3.Rescan()
+	p3, ok := reg3.GetProject("keep-me")
+	if !ok || p3.Available || p3.Dir != src {
+		t.Fatalf("после перезапуска: %+v ok=%v", p3, ok)
+	}
+	if p3.Version != "2.0" {
+		t.Errorf("последняя известная версия должна сохраняться: %q", p3.Version)
+	}
+}
+
+func TestAddLocalRepointUpdatesPath(t *testing.T) {
+	rootA, rootB := t.TempDir(), t.TempDir()
+	a := makeProject(t, rootA, "same-app", "1.0", "a.exe")
+	b := makeProject(t, rootB, "same-app", "2.0", "b.exe")
+	reg := newTestRegistry(t)
+	if _, err := reg.AddLocalProject(a); err != nil {
+		t.Fatal(err)
+	}
+	// Повторное указание того же имени с другим путём — переподключение:
+	// побеждает ПОСЛЕДНИЙ указанный путь.
+	p, err := reg.AddLocalProject(b)
+	if err != nil {
+		t.Fatalf("re-point должен обновлять путь: %v", err)
+	}
+	if p.Dir != b || p.Version != "2.0" {
+		t.Fatalf("ожидался последний путь %s: %+v", b, p)
+	}
+	if got, _ := reg.GetProject("same-app"); got.Dir != b {
+		t.Fatalf("в реестре не последний путь: %+v", got)
+	}
+}
+
+func TestStartProjectUnavailableRejected(t *testing.T) {
+	src := makeProject(t, t.TempDir(), "gone-app", "", "run.exe")
+	reg := newTestRegistry(t)
+	if _, err := reg.AddLocalProject(src); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(src)
+	reg.Rescan()
+	jm := NewJobManager(reg, &Launcher{}, 0)
+	if _, err := jm.StartProject("gone-app", "run.exe", nil); err == nil {
+		t.Fatal("запуск из недоступной папки должен отвергаться")
+	} else if !strings.Contains(err.Error(), "недоступна") {
+		t.Errorf("ошибка должна объяснять причину: %v", err)
 	}
 }
 
@@ -359,6 +417,96 @@ func TestFindAllExesDeterministic(t *testing.T) {
 	}
 	if len(findAllExes(t.TempDir())) != 0 {
 		t.Error("пустая папка → пустой список")
+	}
+}
+
+func TestCheckRepoAvailability(t *testing.T) {
+	zipData := makeRepoZip(t, "Live-main", map[string]string{"app.exe": "MZ"})
+	defer githubStub(t, "/acme/Live/zip/refs/heads/main", zipData)()
+
+	// Существующая ветка → доступен.
+	if ok, detail := CheckRepoAvailability("acme/Live", "main"); !ok {
+		t.Errorf("репозиторий должен быть доступен: %s", detail)
+	}
+	// Несуществующий репозиторий → недоступен, с причиной.
+	if ok, detail := CheckRepoAvailability("acme/Ghost", "main"); ok || detail == "" {
+		t.Errorf("несуществующий репозиторий: ok=%v detail=%q", ok, detail)
+	}
+	// Пустая ветка → перебор main/master.
+	if ok, _ := CheckRepoAvailability("acme/Live", ""); !ok {
+		t.Error("перебор main/master должен найти main")
+	}
+	// Кривая ссылка → ошибка разбора.
+	if ok, _ := CheckRepoAvailability("не ссылка", ""); ok {
+		t.Error("мусор на входе не должен быть доступен")
+	}
+}
+
+func TestRepoFromOrigin(t *testing.T) {
+	if r, b := repoFromOrigin("github:acme/Tool@main"); r != "acme/Tool" || b != "main" {
+		t.Errorf("repoFromOrigin=%q,%q", r, b)
+	}
+	if r, _ := repoFromOrigin("C:\\some\\dir"); r != "" {
+		t.Errorf("не-github origin: %q", r)
+	}
+}
+
+func TestServerAvailabilityEndpoint(t *testing.T) {
+	zipData := makeRepoZip(t, "Repo-main", map[string]string{"app.exe": "MZ"})
+	defer githubStub(t, "/o/Repo/zip/refs/heads/main", zipData)()
+
+	ext := filepath.Join(t.TempDir(), "external-apps")
+	src := makeProject(t, t.TempDir(), "loc-app", "1.0", "run.exe")
+	reg := NewRegistry(ext, filepath.Join(t.TempDir(), "scg-apps.json"))
+	if _, err := reg.AddLocalProject(src); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DownloadProject("o/Repo", ext); err != nil {
+		t.Fatal(err)
+	}
+	reg.Rescan()
+	srv := httptest.NewServer((&Server{Registry: reg, Jobs: NewJobManager(reg, &Launcher{}, 0)}).Handler())
+	defer srv.Close()
+
+	check := func(name string) (ok bool, detail string) {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/projects/" + name + "/availability")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: код %d", name, resp.StatusCode)
+		}
+		var out struct {
+			Available bool   `json:"available"`
+			Detail    string `json:"detail"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Available, out.Detail
+	}
+
+	if ok, d := check("loc-app"); !ok {
+		t.Errorf("локальный проект должен быть доступен: %s", d)
+	}
+	if ok, d := check("repo"); !ok {
+		t.Errorf("github-проект должен быть доступен через стаб: %s", d)
+	}
+	// Папка локального проекта исчезла → живая проверка это видит.
+	os.RemoveAll(src)
+	if ok, d := check("loc-app"); ok || !strings.Contains(d, src) {
+		t.Errorf("должна показываться недоступность с последним путём: ok=%v %q", ok, d)
+	}
+	// Неизвестный проект → 404.
+	resp, err := http.Get(srv.URL + "/api/projects/ghost/availability")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("ghost: код %d, ожидался 404", resp.StatusCode)
 	}
 }
 
