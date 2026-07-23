@@ -31,7 +31,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"scg-host/internal/host"
@@ -91,8 +90,8 @@ func usage() {
                     подключить локальный проект (используется на месте)
   download <ссылка на репозиторий> [--dir DIR]
                     скачать ВЕСЬ проект с GitHub в external-apps (нужен интернет)
-  run-project <проект> <exe> [--arg значение ...] [--dir DIR] [--timeout]
-                    запустить выбранный .exe из проекта
+  run-project <проект> <exe> [--dir DIR] [--timeout]
+                    запустить выбранный .exe из проекта (как есть, без аргументов)
   serve [--dir DIR] [--addr :8080] [--max-parallel 0] [--open]
                     Web UI + HTTP API
 
@@ -313,16 +312,16 @@ func cmdDownload(args []string) error {
 	return nil
 }
 
+// cmdRunProject запускает выбранный .exe проекта КАК ЕСТЬ: аргументы
+// пользователем не передаются (симметрично кнопке «Запустить» в Web UI).
 func cmdRunProject(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("ожидалось: run-project <проект> <exe> [--arg значение ...] [--dir DIR]")
+		return fmt.Errorf("ожидалось: run-project <проект> <exe> [--dir DIR]")
 	}
 	project, exe := args[0], args[1]
 	fs := flag.NewFlagSet("run-project", flag.ExitOnError)
 	dir := fs.String("dir", "", "рабочий каталог (по умолчанию рядом с exe)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "предел ожидания результата")
-	var extra multiFlag
-	fs.Var(&extra, "arg", "аргумент программе (флаг можно повторять)")
 	if err := fs.Parse(args[2:]); err != nil {
 		return err
 	}
@@ -331,7 +330,7 @@ func cmdRunProject(args []string) error {
 		return err
 	}
 	jm := host.NewJobManager(reg, &host.Launcher{}, 0)
-	job, err := jm.StartProject(project, exe, extra)
+	job, err := jm.StartProject(project, exe)
 	if err != nil {
 		return err
 	}
@@ -352,12 +351,6 @@ func cmdRunProject(args []string) error {
 // ─────────────────────────────────────────────────────────────────────────
 // СЕКЦИЯ 5. Подкоманда serve: HTTP API + Web UI.
 // ─────────────────────────────────────────────────────────────────────────
-
-// multiFlag — повторяемый строковый флаг (--arg a --arg b).
-type multiFlag []string
-
-func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
-func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)

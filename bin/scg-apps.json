@@ -1,5 +1,43 @@
 {
-  "updated_at": "2026-07-22T12:30:05Z",
-  "local": [],
-  "external": []
+  "updated_at": "2026-07-23T11:16:18Z",
+  "local": [
+    {
+      "name": "ddr",
+      "dir": "C:\\Users\\Admin\\Desktop\\4ScadaAPP\\Tests\\DDR",
+      "source": "local",
+      "version": "—",
+      "origin": "C:\\Users\\Admin\\Desktop\\4ScadaAPP\\Tests\\DDR",
+      "description": "локальный проект: C:\\Users\\Admin\\Desktop\\4ScadaAPP\\Tests\\DDR",
+      "available": true,
+      "executables": [
+        "DDR_Generation_ver10.exe"
+      ]
+    }
+  ],
+  "external": [
+    {
+      "name": "lorentzprojectbuilder_ver10",
+      "dir": "C:\\Users\\Admin\\Desktop\\4ScadaAPP\\scg-host-v0.1.2\\scg-host\\bin\\external-apps\\TheBikePRO-_LorentzProjectBuilder_ver10",
+      "source": "github",
+      "version": "main",
+      "origin": "github:TheBikePRO/_LorentzProjectBuilder_ver10@main",
+      "repo": "TheBikePRO/_LorentzProjectBuilder_ver10",
+      "description": "github.com/TheBikePRO/_LorentzProjectBuilder_ver10",
+      "available": true,
+      "executables": []
+    },
+    {
+      "name": "ps2exe",
+      "dir": "C:\\Users\\Admin\\Desktop\\4ScadaAPP\\scg-host-v0.1.2\\scg-host\\bin\\external-apps\\MScholtes-PS2EXE",
+      "source": "github",
+      "version": "master",
+      "origin": "github:MScholtes/PS2EXE@master",
+      "repo": "MScholtes/PS2EXE",
+      "description": "github.com/MScholtes/PS2EXE",
+      "available": true,
+      "executables": [
+        "Module/Win-PS2EXE.exe"
+      ]
+    }
+  ]
 }

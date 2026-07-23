@@ -27,7 +27,8 @@ const KillGrace = 1 * time.Second
 // Launcher запускает исполняемый файл проекта (режим raw) в изоляции:
 //   - каждый запуск = новый процесс ОС;
 //   - рабочий каталог — папка проекта;
-//   - окружение минимально (PATH, HOME, LANG, LC_ALL, TMPDIR, SystemRoot);
+//   - окружение минимально, но работоспособно (PATH, TMP/TEMP, USERPROFILE,
+//     APPDATA и другие обязательные для Windows — см. minimalEnv);
 //   - принудительное завершение по таймауту, лимит вывода.
 type Launcher struct {
 	Timeout time.Duration // 0 → DefaultTimeout
@@ -111,9 +112,25 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// minimalEnv — минимальное окружение процесса приложения.
+// minimalEnv — минимальное РАБОТОСПОСОБНОЕ окружение процесса приложения.
+// Помимо базовых (PATH, HOME, LANG…) обязательно передаются переменные,
+// без которых программы Windows не работают:
+//   - TMP/TEMP/USERPROFILE — поиск временной папки (GetTempPath); без них
+//     Windows подставляет C:\Windows, куда писать нельзя → приложения
+//     (например, самораспаковывающиеся PyInstaller .exe) падают с ошибкой
+//     «Could not create temporary directory!»;
+//   - APPDATA/LOCALAPPDATA/ProgramData — профильные данные приложений;
+//   - SystemRoot/SystemDrive/windir/ComSpec/PATHEXT — системные пути.
 func minimalEnv() []string {
-	keep := []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SystemRoot"}
+	keep := []string{
+		// база (кроссплатформенно)
+		"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR",
+		// Windows: временные файлы и профиль пользователя
+		"TMP", "TEMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData",
+		// Windows: системные
+		"SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT",
+		"NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+	}
 	env := make([]string, 0, len(keep))
 	for _, k := range keep {
 		if v, ok := os.LookupEnv(k); ok {

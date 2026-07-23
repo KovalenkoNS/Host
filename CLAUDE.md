@@ -33,9 +33,12 @@ Excel, правила целостности, работа со SCADA) в хос
   скачивание (подменяется в тестах), архив НЕ качается. UI дёргает эндпоинт
   асинхронно (checkAvail) для каждой карточки.
 - HostVersion (ids.go, сейчас 0.2.0) — версия хоста, видна в UI и CLI.
-- Запуск: JobManager.StartProject(project, exe, args) — проверяет, что exe из
+- Запуск: JobManager.StartProject(project, exe) — проверяет, что exe из
   списка Project.Executables (защита от произвольного пути), затем
-  Launcher.Run (raw). findAllExes: сортировка глубина→алфавит.
+  Launcher.Run (raw). АРГУМЕНТЫ ПОЛЬЗОВАТЕЛЕМ НЕ ПЕРЕДАЮТСЯ (директива
+  2026-07-23): запуск только кнопкой, файл выполняется как есть — ни в UI,
+  ни в API (runProjectBody), ни в CLI (run-project) аргументов нет.
+  findAllExes: сортировка глубина→алфавит.
 - Персистентность: scg-apps.json (рядом с exe) — сводка local+external,
   persistState переписывает её при каждом изменении (Rescan, AddLocalProject,
   RemoveProject). Для локальных это ещё и источник восстановления путей.
@@ -54,7 +57,10 @@ Excel, правила целостности, работа со SCADA) в хос
   (external-apps + scg-apps.json, LoadState, Rescan); openBrowser.
 - internal/host/ids.go — пакетный док + HostVersion + NewCallID (id заданий).
 - internal/host/launcher.go — Launcher.Run: raw-запуск (dir+command+args),
-  минимальное окружение, таймаут, WaitDelay=KillGrace (внуки на Windows),
+  минимальное НО работоспособное окружение (minimalEnv: обязательно
+  TMP/TEMP/USERPROFILE/APPDATA — без них Windows-программы, в т.ч.
+  PyInstaller-exe, падают «Could not create temporary directory!»; был
+  инцидент 2026-07-23), таймаут, WaitDelay=KillGrace (внуки на Windows),
   лимит 16 МиБ, resolveCommand (голое имя сперва ищется в dir), RunResult.
 - internal/host/registry.go — Project{Name,Dir,Source,Version,Origin,Repo,
   Available,Executables}; local + external; AddLocalProject (re-point),
@@ -64,9 +70,10 @@ Excel, правила целостности, работа со SCADA) в хос
   downloadRepoZip (main→master), extractRepoZip (zip-slip защита, exec-биты),
   loadProject (Source=github, Repo из меты), projectMeta/.scg-project.json,
   CheckRepoAvailability + repoFromOrigin, ExternalAppsDirName="external-apps".
-- internal/host/jobs.go — Job{Project,Executable,Args}; JobManager.StartProject
-  (через Launcher.Run; недоступный проект отвергается), Cancel, Wait,
-  List/Get, семафор --max-parallel.
+- internal/host/jobs.go — Job{Project,Executable} (без Args);
+  JobManager.StartProject (через Launcher.Run, всегда без аргументов;
+  недоступный проект отвергается), Cancel, Wait, List/Get,
+  семафор --max-parallel.
 - internal/host/server.go — только HTTP API: /api/projects (+rescan),
   /api/projects/local, /api/projects/github, /api/projects/{name}/run,
   /remove, /availability; /api/jobs*.
@@ -91,10 +98,11 @@ Excel, правила целостности, работа со SCADA) в хос
   backtick внутри — закроет литерал (был инцидент с `.exe` в тексте).
 - README.md — часть поставки: любое изменение поведения отражать в нём.
   Писать в том числе для неспециалистов.
-- ПОСТАВКА: после ЛЮБОГО изменения проекта собирать bin/scg-host.exe
-  (go build -o bin/scg-host.exe ./cmd/scg-host) и коммитить его вместе с
-  изменениями в github (origin: KovalenkoNS/Host) — репозиторий всегда
-  содержит актуальный готовый .exe (директива пользователя, 2026-07-23).
+- ПОСТАВКА (директива пользователя, 2026-07-23): после ЛЮБОГО изменения
+  проекта собирать bin/scg-host.exe (go build -o bin/scg-host.exe
+  ./cmd/scg-host). Полноценное тестирование (E2E) и коммит/пуш в github
+  (origin: KovalenkoNS/Host) — ТОЛЬКО по непосредственной команде
+  пользователя. .exe коммитится вместе с изменениями, когда пуш разрешён.
 - Не выполнять запись в SCADA и не тащить сюда предметную логику SCG.
 
 ## Сборка и проверка

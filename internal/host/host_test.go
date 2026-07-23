@@ -112,6 +112,29 @@ func TestLauncherCancel(t *testing.T) {
 	}
 }
 
+func TestMinimalEnvKeepsWindowsTemp(t *testing.T) {
+	// Регрессия: без TMP/TEMP/USERPROFILE программы Windows не могут создать
+	// временную папку (GetTempPath → C:\Windows) и падают, например
+	// PyInstaller-exe с «Could not create temporary directory!».
+	t.Setenv("TMP", `C:\fake\tmp`)
+	t.Setenv("TEMP", `C:\fake\temp`)
+	t.Setenv("USERPROFILE", `C:\fake\profile`)
+	t.Setenv("SECRET_TOKEN", "must-not-leak")
+	env := minimalEnv()
+	got := map[string]bool{}
+	for _, e := range env {
+		got[e] = true
+	}
+	for _, want := range []string{`TMP=C:\fake\tmp`, `TEMP=C:\fake\temp`, `USERPROFILE=C:\fake\profile`} {
+		if !got[want] {
+			t.Errorf("в окружении нет %s: %v", want, env)
+		}
+	}
+	if got["SECRET_TOKEN=must-not-leak"] {
+		t.Error("посторонние переменные не должны передаваться приложению")
+	}
+}
+
 func TestResolveCommand(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "app.exe")
@@ -256,7 +279,7 @@ func TestStartProjectUnavailableRejected(t *testing.T) {
 	os.RemoveAll(src)
 	reg.Rescan()
 	jm := NewJobManager(reg, &Launcher{}, 0)
-	if _, err := jm.StartProject("gone-app", "run.exe", nil); err == nil {
+	if _, err := jm.StartProject("gone-app", "run.exe"); err == nil {
 		t.Fatal("запуск из недоступной папки должен отвергаться")
 	} else if !strings.Contains(err.Error(), "недоступна") {
 		t.Errorf("ошибка должна объяснять причину: %v", err)
@@ -530,15 +553,15 @@ func TestStartProjectValidates(t *testing.T) {
 	reg.Rescan()
 	jm := NewJobManager(reg, &Launcher{}, 0)
 
-	if _, err := jm.StartProject("demo", "../evil.exe", nil); err == nil {
+	if _, err := jm.StartProject("demo", "../evil.exe"); err == nil {
 		t.Error("exe вне списка должен отвергаться")
 	}
-	if _, err := jm.StartProject("ghost", "tool.exe", nil); err == nil {
+	if _, err := jm.StartProject("ghost", "tool.exe"); err == nil {
 		t.Error("несуществующий проект должен отвергаться")
 	}
 	// Валидный выбор: задание создаётся; фейковый .exe не запустится —
 	// задание завершится ошибкой асинхронно, но выбор/валидация проходят.
-	job, err := jm.StartProject("demo", "tool.exe", nil)
+	job, err := jm.StartProject("demo", "tool.exe")
 	if err != nil {
 		t.Fatalf("валидный exe: %v", err)
 	}
@@ -563,7 +586,7 @@ func TestJobsParallelList(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		job, err := jm.StartProject("fast", "a.exe", nil)
+		job, err := jm.StartProject("fast", "a.exe")
 		if err != nil {
 			t.Fatal(err)
 		}

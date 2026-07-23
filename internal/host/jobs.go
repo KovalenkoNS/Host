@@ -21,11 +21,11 @@ const (
 
 // Job — один запуск исполняемого файла проекта, выполняемый параллельно
 // с другими. Каждый Job — отдельная горутина хоста и отдельный процесс ОС.
+// Аргументы пользователем НЕ передаются: файл запускается как есть, кнопкой.
 type Job struct {
 	ID         string          `json:"id"`
 	Project    string          `json:"project"`
 	Executable string          `json:"executable"`
-	Args       []string        `json:"args,omitempty"`
 	State      JobState        `json:"state"`
 	StartedAt  time.Time       `json:"started_at"`
 	EndedAt    *time.Time      `json:"ended_at,omitempty"`
@@ -60,8 +60,9 @@ func NewJobManager(reg *Registry, l *Launcher, maxParallel int) *JobManager {
 // StartProject запускает выбранный исполняемый файл проекта асинхронно и сразу
 // возвращает Job в состоянии running. exe должен быть из списка
 // Project.Executables (путь вне списка отвергается — защита от запуска
-// произвольного файла). Ошибки конфигурации возвращаются синхронно.
-func (jm *JobManager) StartProject(project, exe string, args []string) (*Job, error) {
+// произвольного файла). Файл запускается КАК ЕСТЬ, без аргументов —
+// пользователь только нажимает кнопку. Ошибки конфигурации — синхронно.
+func (jm *JobManager) StartProject(project, exe string) (*Job, error) {
 	p, ok := jm.registry.GetProject(project)
 	if !ok {
 		return nil, fmt.Errorf("проект %q не подключён", project)
@@ -85,7 +86,6 @@ func (jm *JobManager) StartProject(project, exe string, args []string) (*Job, er
 		ID:         NewCallID(),
 		Project:    project,
 		Executable: exe,
-		Args:       args,
 		State:      JobRunning,
 		StartedAt:  time.Now().UTC(),
 		cancel:     cancel,
@@ -103,7 +103,7 @@ func (jm *JobManager) run(ctx context.Context, job *Job, dir string) {
 		jm.sem <- struct{}{}
 		defer func() { <-jm.sem }()
 	}
-	res, err := jm.launcher.Run(ctx, dir, job.Executable, job.Args, 0)
+	res, err := jm.launcher.Run(ctx, dir, job.Executable, nil, 0)
 
 	jm.mu.Lock()
 	defer jm.mu.Unlock()

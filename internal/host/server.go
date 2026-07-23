@@ -105,9 +105,10 @@ func (s *Server) apiDownloadGitHub(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// runProjectBody — только выбор файла: аргументы пользователем не передаются,
+// файл запускается как есть по кнопке.
 type runProjectBody struct {
-	Executable string   `json:"executable"`
-	Args       []string `json:"args,omitempty"`
+	Executable string `json:"executable"`
 }
 
 func (s *Server) apiProjectRun(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +118,7 @@ func (s *Server) apiProjectRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	job, err := s.Jobs.StartProject(name, in.Executable, in.Args)
+	job, err := s.Jobs.StartProject(name, in.Executable)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

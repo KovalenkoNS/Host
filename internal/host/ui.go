@@ -42,8 +42,7 @@ th,td{border:1px solid #dfe3e8;padding:.4rem .6rem;font-size:.85rem;text-align:l
 @media(max-width:800px){.forms{grid-template-columns:1fr}}
 .form{background:#fff;border:1px dashed #aab3bd;border-radius:10px;padding:.85rem}
 .exe{display:flex;gap:.4rem;align-items:center;margin:.25rem 0;flex-wrap:wrap}
-.exe code{flex:1 1 55%;background:#f1f3f5;padding:.15rem .35rem;border-radius:4px;font-size:.8rem;word-break:break-all}
-.exe input{flex:1 1 26%;width:auto;margin:0}
+.exe code{flex:1 1 70%;background:#f1f3f5;padding:.15rem .35rem;border-radius:4px;font-size:.8rem;word-break:break-all}
 pre{white-space:pre-wrap;word-break:break-all;max-height:8rem;overflow:auto;margin:0}
 small{color:var(--muted)}
 </style></head><body>
@@ -95,12 +94,11 @@ small{color:var(--muted)}
     указанным путём — верните папку на место и нажмите «Обновить список»
     или подключите проект заново.</small></p>
   {{else if .Executables}}
-    <small>Исполняемые файлы — выберите и запустите:</small>
-    {{range $i, $exe := .Executables}}
+    <small>Исполняемые файлы — запуск по кнопке:</small>
+    {{range $exe := .Executables}}
     <div class="exe">
       <code>{{$exe}}</code>
-      <input id="pargs-{{$pname}}-{{$i}}" placeholder="аргументы">
-      <button onclick="runProject('{{$pname}}','{{$exe}}','pargs-{{$pname}}-{{$i}}')">Запустить</button>
+      <button onclick="runProject('{{$pname}}','{{$exe}}')">Запустить</button>
     </div>
     {{end}}
   {{else}}
@@ -138,11 +136,8 @@ async function downloadGH(){
   msg.textContent=' ✓ '+t.name+' (.exe: '+(t.executables?t.executables.length:0)+')';
   setTimeout(()=>location.reload(),900);
 }
-async function runProject(name,exe,argsId){
-  let args=null;
-  const raw=(document.getElementById(argsId).value||'').trim();
-  if(raw){ args=raw.split(/\s+/); }
-  const r=await post('/api/projects/'+encodeURIComponent(name)+'/run',{executable:exe,args:args});
+async function runProject(name,exe){
+  const r=await post('/api/projects/'+encodeURIComponent(name)+'/run',{executable:exe});
   if(!r.ok){ const t=await r.json(); alert(t.error||r.statusText); }
   refresh();
 }
